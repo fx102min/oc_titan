@@ -1,0 +1,78 @@
+name: Fork checks
+
+on:
+  pull_request:
+    branches: [dev]
+  workflow_call:
+    inputs:
+      base-sha:
+        required: true
+        type: string
+      upstream-sha:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fork-check-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    # Upstream PRs are checked by Sync upstream, including PRs created by GITHUB_TOKEN.
+    if: github.repository == 'fx102min/oc_titan' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    name: check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Enable repository symlinks on Windows
+        if: runner.os == 'Windows'
+        run: git config --global core.symlinks true
+
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.base-sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure git identity for merges and tests
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Merge the selected upstream commit for verification
+        if: inputs.upstream-sha != ''
+        env:
+          UPSTREAM_SHA: ${{ inputs.upstream-sha }}
+        run: |
+          git fetch --no-tags https://github.com/anomalyco/opencode.git "$UPSTREAM_SHA"
+          git merge --no-edit "$UPSTREAM_SHA"
+
+      - name: Select the test comparison
+        env:
+          BASE_SHA: ${{ inputs.base-sha }}
+        run: |
+          echo "TURBO_SCM_BASE=${BASE_SHA:-$(git rev-parse HEAD^1)}" >> "$GITHUB_ENV"
+          echo "TURBO_SCM_HEAD=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+
+      - name: Setup Bun and dependencies
+        uses: ./.github/actions/setup-bun
+
+      - name: Lint and typecheck
+        if: runner.os == 'Linux'
+        run: bun run check
+
+      - name: Run affected package unit tests
+        # Turbo invokes each package's own test script; never run bun test at the root.
+        run: GITHUB_ACTIONS=false bun turbo test --affected --concurrency=2
+        env:
+          OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: ${{ runner.os == 'Windows' && 'true' || 'false' }}

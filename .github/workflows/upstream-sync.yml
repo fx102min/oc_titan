@@ -1,0 +1,137 @@
+name: Sync upstream
+
+on:
+  schedule:
+    # 09:17 Asia/Seoul; avoid the busy start of the hour.
+    - cron: "17 0 * * *"
+  workflow_dispatch:
+  push:
+    branches: [dev]
+
+permissions: {}
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: github.repository == 'fx102min/oc_titan'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: write
+      statuses: write
+    outputs:
+      number: ${{ steps.pr.outputs.number }}
+      base: ${{ steps.pr.outputs.base }}
+      head: ${{ steps.pr.outputs.head }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: dev
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Find upstream updates
+        id: updates
+        shell: bash
+        run: |
+          git fetch --no-tags https://github.com/anomalyco/opencode.git dev
+          if git merge-base --is-ancestor FETCH_HEAD HEAD; then
+            echo "No upstream updates to merge." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "available=true" >> "$GITHUB_OUTPUT"
+
+      - name: Open or reuse the upstream PR
+        if: steps.updates.outputs.available == 'true'
+        id: pr
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        with:
+          script: |
+            const pulls = await github.rest.pulls.list({
+              ...context.repo,
+              state: "open",
+              base: "dev",
+              head: "anomalyco:dev",
+            })
+            const pr = pulls.data[0] ?? (await github.rest.pulls.create({
+              ...context.repo,
+              base: "dev",
+              head: "anomalyco:dev",
+              title: "chore: sync upstream OpenCode",
+              body: [
+                "Updates from `anomalyco/opencode:dev` into this fork's `dev`.",
+                "",
+                "The existing PR follows upstream changes. **Nothing is merged automatically.**",
+                "",
+                "Review the diff and the `upstream-sync/checks` status before merging. Checks run daily, after changes to this fork's `dev`, and on manual runs of **Sync upstream**.",
+                "",
+                "Checks cover the merge with this fork: lint, type checks, and affected package unit tests on Linux and Windows. Conflicts fail the checks and require manual resolution.",
+                "",
+                "Use **Create a merge commit** to preserve upstream history. Do not squash or rebase this update PR.",
+                "",
+                "If upstream changes after a check, run **Sync upstream** again to check the latest commit.",
+              ].join("\n"),
+              maintainer_can_modify: false,
+            })).data
+            core.setOutput("number", pr.number)
+            core.setOutput("base", pr.base.sha)
+            core.setOutput("head", pr.head.sha)
+            await github.rest.repos.createCommitStatus({
+              ...context.repo,
+              sha: pr.head.sha,
+              state: "pending",
+              context: "upstream-sync/checks",
+              description: "Checking the merge with this fork's dev",
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })
+            await core.summary.addLink(`Upstream PR #${pr.number}`, pr.html_url)
+              .addRaw(`\n\nBase: ${pr.base.sha}\n\nUpstream: ${pr.head.sha}\n`).write()
+
+  checks:
+    needs: prepare
+    if: needs.prepare.outputs.number != ''
+    permissions:
+      contents: read
+    uses: ./.github/workflows/fork-check.yml
+    with:
+      base-sha: ${{ needs.prepare.outputs.base }}
+      upstream-sha: ${{ needs.prepare.outputs.head }}
+
+  report:
+    needs: [prepare, checks]
+    if: always() && needs.prepare.outputs.number != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      pull-requests: read
+      statuses: write
+    steps:
+      - name: Publish the result on the PR
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          PR_NUMBER: ${{ needs.prepare.outputs.number }}
+          BASE_SHA: ${{ needs.prepare.outputs.base }}
+          UPSTREAM_SHA: ${{ needs.prepare.outputs.head }}
+          CHECK_RESULT: ${{ needs.checks.result }}
+        with:
+          script: |
+            const pr = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: Number(process.env.PR_NUMBER),
+            })
+            const current = pr.data.base.sha === process.env.BASE_SHA && pr.data.head.sha === process.env.UPSTREAM_SHA
+            const passed = process.env.CHECK_RESULT === "success"
+            await github.rest.repos.createCommitStatus({
+              ...context.repo,
+              sha: process.env.UPSTREAM_SHA,
+              state: !current ? "error" : passed ? "success" : "failure",
+              context: "upstream-sync/checks",
+              description: !current
+                ? "Branches changed during checks; run Sync upstream again"
+                : passed ? "Merge checks passed; review and merge manually" : "Merge or checks failed; inspect the workflow logs",
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })
