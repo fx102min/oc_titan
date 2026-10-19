@@ -67,7 +67,7 @@ jobs:
                 "",
                 "The existing PR follows upstream changes. **Nothing is merged automatically.**",
                 "",
-                "Review the diff and the `upstream-sync/checks` status before merging. Checks run daily, after changes to this fork's `dev`, and on manual runs of **Sync upstream**.",
+                "Review the diff and the required `fork/checks` status before merging. Checks run daily, after changes to this fork's `dev`, and on manual runs of **Sync upstream**.",
                 "",
                 "Checks cover the merge with this fork: lint, type checks, and affected package unit tests on Linux and Windows. Conflicts fail the checks and require manual resolution.",
                 "",
@@ -84,7 +84,7 @@ jobs:
               ...context.repo,
               sha: pr.head.sha,
               state: "pending",
-              context: "upstream-sync/checks",
+              context: "fork/checks",
               description: "Checking the merge with this fork's dev",
               target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
             })
@@ -96,6 +96,9 @@ jobs:
     if: needs.prepare.outputs.number != ''
     permissions:
       contents: read
+      # The reusable workflow declares a status reporter for this fork's own PRs.
+      # Its test job stays read-only; upstream results are published by report below.
+      statuses: write
     uses: ./.github/workflows/fork-check.yml
     with:
       base-sha: ${{ needs.prepare.outputs.base }}
@@ -129,7 +132,7 @@ jobs:
               ...context.repo,
               sha: process.env.UPSTREAM_SHA,
               state: !current ? "error" : passed ? "success" : "failure",
-              context: "upstream-sync/checks",
+              context: "fork/checks",
               description: !current
                 ? "Branches changed during checks; run Sync upstream again"
                 : passed ? "Merge checks passed; review and merge manually" : "Merge or checks failed; inspect the workflow logs",

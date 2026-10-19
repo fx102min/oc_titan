@@ -13,7 +13,7 @@ The workflow checks an exact snapshot of both branches by merging them locally
 on Linux and Windows runners. It runs `bun run check` on Linux and affected
 package unit tests on both platforms. Browser E2E tests and release builds are
 not included. Conflicts fail verification without changing either branch.
-The `upstream-sync/checks` commit status links to the results. If either branch
+The `fork/checks` commit status links to the results. If either branch
 changes while checks are running, the result asks for another run.
 
 Review the changes and a passing status on the current upstream commit, then use
@@ -26,6 +26,20 @@ permission.
 explicit `Sync upstream` run so checks do not depend on approval of workflows
 triggered by a bot-created PR. To check a newer upstream commit immediately, open
 **Actions → Sync upstream → Run workflow**, selecting `dev`.
+
+## Branch protection
+
+`dev` requires a PR and a successful `fork/checks` status from GitHub Actions.
+Both this fork's own PRs and upstream update PRs publish that status only after
+their checks pass. The rule applies to administrators too, disallows force
+pushes and deletion, and does not allow bypassing the PR requirement. Automatic
+merge is disabled in the repository settings.
+
+No additional approving reviewer is required, so the repository owner can
+review and manually merge their own PRs after checks pass. The "Require branches
+to be up to date" option stays off: the upstream source branch cannot include
+this fork's commits. `Sync upstream` instead tests its merge with a captured
+`dev` commit and rejects a result if either branch changes during that run.
 
 ## One-time setup
 

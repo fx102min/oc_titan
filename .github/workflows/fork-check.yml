@@ -76,3 +76,28 @@ jobs:
         run: GITHUB_ACTIONS=false bun turbo test --affected --concurrency=2
         env:
           OPENCODE_EXPERIMENTAL_DISABLE_FILEWATCHER: ${{ runner.os == 'Windows' && 'true' || 'false' }}
+
+  report:
+    name: Publish fork check status
+    needs: check
+    if: always() && github.repository == 'fx102min/oc_titan' && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+    steps:
+      - name: Publish the required merge check
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+        env:
+          CHECK_RESULT: ${{ needs.check.result }}
+        with:
+          script: |
+            const passed = process.env.CHECK_RESULT === "success"
+            await github.rest.repos.createCommitStatus({
+              ...context.repo,
+              sha: context.payload.pull_request.head.sha,
+              state: passed ? "success" : "failure",
+              context: "fork/checks",
+              description: passed ? "Linux and Windows checks passed; merge manually" : "Checks failed or were cancelled; inspect the workflow logs",
+              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+            })
