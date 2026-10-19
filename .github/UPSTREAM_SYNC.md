@@ -33,6 +33,8 @@ triggered by a bot-created PR. To check a newer upstream commit immediately, ope
 2. Enable **Sync upstream** and **Fork checks** in this fork's Actions settings.
    Keep the inherited upstream workflows disabled: they use upstream-specific
    runners, publishing secrets, and PR maintenance policies.
+   The upstream issue/PR cleanup workflows also have repository guards so they
+   cannot close this fork's issues or update PRs if activated by a schedule.
 3. Under **Settings → Actions → General → Workflow permissions**, enable
    **Allow GitHub Actions to create and approve pull requests**. GitHub combines
    these capabilities in one setting; this workflow only creates PRs.
